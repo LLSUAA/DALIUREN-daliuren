@@ -1,0 +1,27 @@
+# --- Python 忽略清单 ---
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+build/
+dist/
+*.spec
+
+# --- Node.js & Vue 忽略清单 ---
+node_modules/
+liuren-cyber-terminal/node_modules/
+liuren-cyber-terminal/dist/
+.npm/
+
+# --- Tauri 忽略清单 ---
+liuren-cyber-terminal/src-tauri/target/
+liuren-cyber-terminal/src-tauri/gen/
+
+# --- 安全与私密文件 ---
+.env
+*.pem
+*.key
+
+# --- 操作系统文件 ---
+.DS_Store
+Thumbs.db

@@ -1,0 +1,29 @@
+[
+  {
+    "case_id": "case_001",
+    "timestamp_input": "2026-04-13T10:00:00",
+    "params": {
+      "zhan_shi_index": 5,
+      "yue_jiang_index": 10
+    },
+    "expected_route": "ZeiKe"
+  },
+  {
+    "case_id": "case_002",
+    "timestamp_input": "2026-04-13T14:30:00",
+    "params": {
+      "zhan_shi_index": 2,
+      "yue_jiang_index": 8
+    },
+    "expected_route": "BiYong"
+  },
+  {
+    "case_id": "case_003",
+    "timestamp_input": "2026-04-13T18:45:00",
+    "params": {
+      "zhan_shi_index": 0,
+      "yue_jiang_index": 7
+    },
+    "expected_route": "SheHai"
+  }
+]
