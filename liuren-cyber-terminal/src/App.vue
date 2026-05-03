@@ -210,7 +210,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, nextTick } from "vue";
 import { Command } from '@tauri-apps/plugin-shell';
 // 启动 Python 伴生引擎
 const startEngine = async () => {
@@ -552,7 +552,7 @@ function getSkyBranchStyle(index: number) {
   };
 }
 
-// 时空推演 - 调用后端API进行真太阳时推演
+// 时空推演 - SSE流式调用后端API进行真太阳时推演
 async function spacetimeDeduce() {
   if (!timeStr.value || !eventIntent.value) {
     oracleReading.value = '[VALIDATION_ERR] 时空参数不完整：请填写时间和占测事由';
@@ -562,17 +562,16 @@ async function spacetimeDeduce() {
   
   isLoading.value = true;
   isError.value = false;
+  oracleReading.value = '';
+  displayedOracle.value = '';
   
   try {
-    // 格式化时间字符串
     const formattedTime = timeStr.value.replace('T', ' ') + ':00';
     
-    // 调用后端API
-    const response = await fetch(`${API_BASE_URL}/api/deduce`, {
+    // 1. 发起 SSE 流式 POST 请求
+    const response = await fetch(`${API_BASE_URL}/api/deduce/stream`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         time_str: formattedTime,
         longitude: currentLongitude.value,
@@ -583,44 +582,116 @@ async function spacetimeDeduce() {
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP错误! 状态码: ${response.status}`);
+      const errText = await response.text();
+      throw new Error(errText || `HTTP错误! 状态码: ${response.status}`);
     }
     
-    const apiResult = await response.json();
+    // 2. 获取流式读取器
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
     
-    // 立即检查后端是否成功，如果失败直接抛出异常
-    if (apiResult.success === false || apiResult.error) {
-      throw new Error(apiResult.error || '后端引擎推演失败');
+    // 3. 循环读取 SSE 数据块
+    while (true) {
+      const { done, value } = await reader.read();
+      
+      if (done) break;
+      
+      buffer += decoder.decode(value, { stream: true });
+      
+      // 按 \n\n 分割完整的 SSE 事件
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || ''; // 保留最后一个不完整事件
+      
+      for (const event of events) {
+        const trimmedEvent = event.trim();
+        if (!trimmedEvent) continue;
+        
+        // 提取所有 data: 行（支持多行 data）
+        const dataLines = trimmedEvent
+          .split('\n')
+          .filter(line => line.trimStart().startsWith('data:'))
+          .map(line => {
+            const idx = line.indexOf('data:');
+            return line.slice(idx + 5).trimStart();
+          });
+        
+        if (dataLines.length === 0) continue;
+        
+        const data = dataLines.join('\n');
+        
+        // === 终止信号 ===
+        if (data === '[DONE]') {
+          continue;
+        }
+        
+        // === 错误事件 ===
+        if (data.startsWith('[ERROR]') || data.startsWith('[ERR]')) {
+          isError.value = true;
+          const errMsg = data.replace(/^\[(ERROR|ERR)\]\s*/, '');
+          displayedOracle.value += errMsg;
+          oracleReading.value += errMsg;
+          continue;
+        }
+        
+        // === 尝试解析快照 JSON ===
+        let isSnapshot = false;
+        try {
+          const json = JSON.parse(data);
+          
+          if (json.type === 'snapshot' || (json.snapshot && json.spacetime_params)) {
+            isSnapshot = true;
+            
+            // 提取引擎快照
+            const engineSnapshot = json.snapshot?.snapshot || json.snapshot;
+            
+            // 计算天盘偏移量（根据初传课序的地盘索引）
+            if (engineSnapshot) {
+              const routeDecision = engineSnapshot.route_decision;
+              const initLessonId = routeDecision?.init_node_lesson_id;
+              const fourLessons = engineSnapshot.four_lessons;
+              
+              if (initLessonId && fourLessons) {
+                const initLesson = fourLessons.find((lesson: any) => lesson.id === initLessonId);
+                if (initLesson) {
+                  setOffset(initLesson.bottom);
+                }
+              }
+            }
+            
+            // 组装结果对象供星盘渲染
+            result.value = {
+              spacetime_params: json.spacetime_params || {},
+              event_intent: json.event_intent || '',
+              route_warning: json.route_warning || ''
+            };
+          }
+        } catch {
+          // 非 JSON，作为神谕文本处理
+        }
+        
+        if (isSnapshot) continue;
+        
+        // === 神谕文本块：逐字追加到终端显示区 ===
+        isTyping.value = true;
+        displayedOracle.value += data;
+        oracleReading.value += data;
+        
+        // 自动滚动到底部，保持打字机效果在可视区域
+        await nextTick();
+        const oracleContent = document.querySelector('.oracle-content');
+        if (oracleContent) {
+          oracleContent.scrollTop = oracleContent.scrollHeight;
+        }
+      }
     }
     
-    // 解析推演结果
-    const snapshot = apiResult.snapshot.snapshot;
-    const routeDecision = snapshot.route_decision;
-    
-    // 计算天盘偏移量（根据初传课序的地盘索引）
-    const initLessonId = routeDecision.init_node_lesson_id;
-    const fourLessons = snapshot.four_lessons;
-    const initLesson = fourLessons.find((lesson: any) => lesson.id === initLessonId);
-    
-    if (initLesson) {
-      // 根据地盘索引计算天盘偏移
-      const earthIndex = initLesson.bottom;
-      setOffset(earthIndex);
-    }
-    
-    // 存储结果
-    result.value = {
-      ...apiResult.snapshot,
-      route_warning: apiResult.route_warning
-    };
-    
-   // 安全防御：确保大六壬解读是字符串
-    const oracleText = apiResult.snapshot.oracle_reading || '[WARN] 无法解析大六壬数据';
-    oracleReading.value = oracleText;
-    await typeOracleText(oracleText);
+    // 4. 流结束，收尾
+    isTyping.value = false;
     
   } catch (error: any) {
     console.error('推演错误:', error);
+    isTyping.value = false;
     
     // 优雅降级：网络错误处理
     if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
@@ -628,11 +699,11 @@ async function spacetimeDeduce() {
     } else if (error.message.includes('HTTP错误')) {
       oracleReading.value = `[HTTP_ERR] 服务器响应异常: ${error.message}`;
     } else {
-      // 显示真正的后端错误信息
       oracleReading.value = `[ENGINE_ERR] ${error.message}`;
     }
     
-    await typeOracleText(oracleReading.value, true);
+    displayedOracle.value = oracleReading.value;
+    isError.value = true;
     
     // 如果后端连接失败，回退到前端随机旋转
     const randomOffset = Math.floor(Math.random() * 12);
