@@ -3,7 +3,7 @@ import requests
 import time
 from datetime import datetime, timedelta
 
-API_URL = "http://127.0.0.1:8000/api/deduce"
+API_URL = "http://127.0.0.1:14285/api/deduce/stream"
 
 # 随机生成事件意图
 INTENTS = [

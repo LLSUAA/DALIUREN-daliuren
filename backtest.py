@@ -3,8 +3,8 @@ import json
 import time
 from typing import List, Dict
 
-# API 接口地址 (确保你的 server.py 正在运行)
-API_URL = "http://127.0.0.1:8000/api/deduce"
+# API 接口地址 V2.0 — SSE 流式输出 (确保你的 server.py 正在运行)
+API_URL = "http://127.0.0.1:14285/api/deduce/stream"
 
 # ==========================================
 # 1. 在这里配置你的“历史已知事件”测试集
@@ -96,7 +96,7 @@ TEST_CASES: List[Dict] = [
 
 def run_backtest():
     print("="*50)
-    print("🚀 启动大六壬引擎自动化回测系统...")
+    print("🚀 启动大六壬引擎自动化回测系统 V2.0 (SSE流式)...")
     print("="*50)
     
     success_count = 0
@@ -115,20 +115,59 @@ def run_backtest():
         }
         
         try:
-            # 向本地 API 发送 POST 请求
-            response = requests.post(API_URL, json=payload, timeout=30)
+            # V2.0: 发起 SSE 流式 POST 请求
+            response = requests.post(API_URL, json=payload, stream=True, timeout=120)
             response.raise_for_status()
-            data = response.json()
             
-            if data.get("success"):
-                snapshot = data["snapshot"]
-                oracle_reading = snapshot.get("oracle_reading", "未生成神谕")
-                four_pillars = snapshot.get("spacetime_params", {}).get("four_pillars", {})
+            oracle_chunks = []       # 收集神谕文本片段
+            four_pillars = {}        # 四柱八字（从快照 JSON 提取）
+            snapshot_received = False
+            
+            # 逐行解析 SSE 事件流 (data: ...\n\n)
+            for line in response.iter_lines(decode_unicode=True):
+                if not line:
+                    continue  # 跳过空行（SSE 事件之间的 \n\n 分隔符）
                 
+                # 仅处理 data: 前缀的行
+                if not line.startswith('data:'):
+                    continue
+                
+                data_content = line[5:].lstrip()  # 去掉 "data:" 前缀
+                
+                if not data_content:
+                    continue
+                
+                # === 终止信号 ===
+                if data_content == '[DONE]':
+                    break
+                
+                # === 错误事件 ===
+                if data_content.startswith('[ERROR]') or data_content.startswith('[ERR]'):
+                    oracle_chunks.append(data_content)
+                    continue
+                
+                # === 快照 JSON（第一个事件，仅解析一次） ===
+                if not snapshot_received:
+                    try:
+                        snapshot = json.loads(data_content)
+                        if snapshot.get('type') == 'snapshot' or (snapshot.get('snapshot') and snapshot.get('spacetime_params')):
+                            snapshot_received = True
+                            four_pillars = snapshot.get('spacetime_params', {}).get('four_pillars', {})
+                            continue  # 快照数据不拼入 oracle 文本
+                    except (json.JSONDecodeError, ValueError):
+                        pass  # 非 JSON，作为神谕文本继续处理
+                
+                # === 神谕文本块：逐段收集 ===
+                oracle_chunks.append(data_content)
+            
+            # 拼接完整神谕判词
+            oracle_reading = ''.join(oracle_chunks)
+            
+            if oracle_reading:
                 # 记录到报告
                 report_lines.append(f"## 测试用例: {tc['case_id']}")
                 report_lines.append(f"- **占测时间**: {tc['time_str']}")
-                report_lines.append(f"- **四柱八字**: {four_pillars.get('year')} {four_pillars.get('month')} {four_pillars.get('day')} {four_pillars.get('hour')}")
+                report_lines.append(f"- **四柱八字**: {four_pillars.get('year', '--')} {four_pillars.get('month', '--')} {four_pillars.get('day', '--')} {four_pillars.get('hour', '--')}")
                 report_lines.append(f"- **占测事由**: {tc['event_intent']}")
                 report_lines.append(f"- **【历史真实结果】**: {tc['actual_result']}")
                 report_lines.append(f"\n**🤖 引擎神谕解码**:\n```text\n{oracle_reading}\n```\n")
@@ -137,13 +176,13 @@ def run_backtest():
                 print("✅ 推演完成！")
                 success_count += 1
             else:
-                print(f"❌ 引擎返回错误: {data.get('error')}")
+                print(f"❌ 未获取到神谕判词")
                 
         except requests.exceptions.RequestException as e:
             print(f"❌ API 请求失败: {e}")
         
         # 停顿 2 秒，防止把大模型 API 接口频率打满限制 (Rate Limit)
-        time.sleep(2)
+        time.sleep(5)
 
     # 写入报告文件
     report_filename = "回测报告_BacktestReport.md"

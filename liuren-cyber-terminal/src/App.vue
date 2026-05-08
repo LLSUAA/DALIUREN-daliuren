@@ -311,7 +311,7 @@ const offset = ref(0);
 const innerRotation = computed(() => `rotate(${offset.value * 30}deg)`);
 
 // 后端API地址
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = 'http://127.0.0.1:14285';
 
 // 年份选项（1920-2026）
 const yearOptions = Array.from({ length: 107 }, (_, i) => 1920 + i);
@@ -486,13 +486,16 @@ const networkLocate = async () => {
     
     let errorMessage = '[SYS_ERR] 网络定位超时或被拦截，请手动输入城市';
     
-    if (error.message.includes('HTTP错误')) {
-      errorMessage = `[SYS_ERR] 网络定位服务异常: ${error.message}`;
-    } else if (error.message.includes('Failed to fetch')) {
-      errorMessage = '[SYS_ERR] 网络连接失败，请检查网络设置';
+    // 优雅降级：网络错误处理
+    if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+      oracleReading.value = '[SYS_ERR] 神经链路断开：无法连接到大六壬底层引擎。\n\n💡 可能原因：\n1. 你的杀毒软件（如360）误杀了后台引擎（liuren-engine.exe），请将其加入白名单。\n2. 未安装所需的运行环境，请检查安装目录。';
+    } else if (error.message.includes('HTTP错误')) {
+      oracleReading.value = `[HTTP_ERR] 服务器响应异常: ${error.message}`;
+    } else {
+      oracleReading.value = errorMessage;
     }
     
-    oracleReading.value = errorMessage;
+    // 这行必须放在所有的 if-else 校验外，且被包裹在 catch 内部
     await typeOracleText(oracleReading.value, true);
   }
 };
@@ -509,6 +512,18 @@ const typeOracleText = async (text: string, error: boolean = false) => {
   }
   
   isTyping.value = false;
+};
+
+// 赛博朋克风格 Markdown 解析器 (将大模型的 ** 和 - 转换成发光UI)
+const formatOracle = (text: string) => {
+  if (!text) return '';
+  return text
+    // 处理粗体 **文本**，加上霓虹发光效果
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    // 处理列表项 - 
+    .replace(/^- (.*)/gm, '<span class="list-icon">◈</span> $1')
+    // 渲染真正的换行
+    .replace(/\n/g, '<br/>');
 };
 
 // 设置偏移量
@@ -600,21 +615,18 @@ async function spacetimeDeduce() {
       buffer += decoder.decode(value, { stream: true });
       
       // 按 \n\n 分割完整的 SSE 事件
+      // 按 \n\n 分割完整的 SSE 事件
       const events = buffer.split('\n\n');
-      buffer = events.pop() || ''; // 保留最后一个不完整事件
+      buffer = events.pop() || ''; 
       
       for (const event of events) {
-        const trimmedEvent = event.trim();
-        if (!trimmedEvent) continue;
+        if (!event.trim()) continue; // 忽略纯空事件
         
-        // 提取所有 data: 行（支持多行 data）
-        const dataLines = trimmedEvent
+        // 【核心修复】：绝对不能用 trim()，否则会吃掉换行符和空格！
+        const dataLines = event
           .split('\n')
-          .filter(line => line.trimStart().startsWith('data:'))
-          .map(line => {
-            const idx = line.indexOf('data:');
-            return line.slice(idx + 5).trimStart();
-          });
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.startsWith('data: ') ? line.slice(6) : line.slice(5));
         
         if (dataLines.length === 0) continue;
         
@@ -1435,4 +1447,29 @@ select:focus option:checked {
     font-size: 13px;
   }
 }
+/* =========================================
+   赛博朋克 Markdown 动态渲染样式
+========================================= */
+:deep(.oracle-text strong) {
+  -webkit-text-fill-color: #ffffff;
+  text-shadow: 0 0 10px rgba(0, 200, 255, 0.8);
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+:deep(.oracle-text.error-text strong) {
+  text-shadow: 0 0 10px rgba(255, 0, 100, 0.8);
+}
+
+:deep(.oracle-text .list-icon) {
+  -webkit-text-fill-color: #00c6ff;
+  margin-right: 6px;
+  font-size: 14px;
+  animation: pulse 2s infinite;
+}
+
+:deep(.oracle-text.error-text .list-icon) {
+  -webkit-text-fill-color: #ff0064;
+}
+
 </style>

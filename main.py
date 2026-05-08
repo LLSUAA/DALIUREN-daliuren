@@ -6,39 +6,61 @@ from typing import Dict, Any, List
 from engine.systems.astrolabe_sys import AstrolabeSystem
 from engine.systems.four_lessons_sys import FourLessonsSystem
 from engine.systems.routing_sys import RoutingGatewaySystem
-from engine.core.constants import EarthlyBranch, HeavenlyStem, BRANCHES, STEMS
-
+from engine.systems.three_transmissions_sys import ThreeTransmissionsSystem
+from engine.systems.tian_jiang_sys import TianJiangSystem
+from engine.core.five_elements import calculate_liu_qin
+from engine.core.constants import EarthlyBranch, HeavenlyStem
+from engine.core.schemas import BRANCHES, STEMS
 
 class DaLiuRenEngine:
     """大六壬核心引擎类"""
     
     @staticmethod
-    def generate_snapshot(zhan_shi_index: int, yue_jiang_index: int, 
-                         day_stem_index: int, day_branch_index: int) -> Dict[str, Any]:
+    def generate_snapshot(
+        zhan_shi_index: int, 
+        yue_jiang_index: int, 
+        day_stem_index: int, 
+        day_branch_index: int,
+        is_daytime: bool = True  # <--- 【核心修复】：必须加上这个参数！
+    ) -> Dict[str, Any]:
         """
         生成大六壬推演快照
-        
-        Args:
-            zhan_shi_index: 占时索引
-            yue_jiang_index: 月将索引
-            day_stem_index: 日干索引
-            day_branch_index: 日支索引
-            
-        Returns:
-            Dict[str, Any]: 完整的推演快照
         """
-        # 生成天地盘轨道矩阵
+        # Step 1: 生成天地盘轨道矩阵
         orbit_matrix = AstrolabeSystem.calculate_orbit_matrix(zhan_shi_index, yue_jiang_index)
         
-        # 生成四课结构
-        four_lessons = FourLessonsSystem.generate_four_lessons(orbit_matrix, day_stem_index)
+        # Step 2: 生成四课结构
+        four_lessons = FourLessonsSystem.extract_lessons(orbit_matrix, day_stem_index, day_branch_index)
         
-        # 路由决策
+        # Step 3: 路由决策
         route_decision = RoutingGatewaySystem.dispatch_route(four_lessons, day_stem_index)
         
-        # 计算神煞与硬逻辑状态
-        reversal_flags = DaLiuRenEngine._calculate_reversal_flags(day_stem_index, day_branch_index)
+        # Step 4: 三传推演
+        three_transmissions = ThreeTransmissionsSystem.generate_transmissions(
+            orbit_matrix, four_lessons, route_decision
+        )
         
+        # Step 5: 十二天将排布 (这里完美接收并使用了 is_daytime)
+        tian_jiang = TianJiangSystem.assign_generals(
+            day_stem_index, is_daytime, orbit_matrix
+        )
+        
+        # Step 6: 为三传分别计算六亲
+        transmissions_with_liu_qin = []
+        for tx in three_transmissions:
+            liu_qin = calculate_liu_qin(day_stem_index, tx.heaven_index)
+            transmissions_with_liu_qin.append({
+                "order": tx.order,
+                "name": tx.name,
+                "heaven_index": tx.heaven_index,
+                "earth_index": tx.earth_index,
+                "branch_name": tx.branch_name,
+                "liu_qin": liu_qin
+            })
+        
+        # Step 7: 计算神煞与硬逻辑状态
+        reversal_flags = DaLiuRenEngine._calculate_reversal_flags(day_stem_index, day_branch_index)
+          
         # 组装快照
         snapshot = {
             "orbit_matrix": [
@@ -65,6 +87,15 @@ class DaLiuRenEngine:
                 "init_node_lesson_id": route_decision.init_node_lesson_id,
                 "is_bottom_up": route_decision.is_bottom_up
             },
+            "three_transmissions": transmissions_with_liu_qin,
+            "tian_jiang": [
+                {
+                    "heaven_index": hi,
+                    "heaven_branch": BRANCHES[hi],
+                    "general": general_name
+                }
+                for hi, general_name in sorted(tian_jiang.items())
+            ],
             "reversal_flags": reversal_flags
         }
         

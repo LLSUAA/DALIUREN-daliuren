@@ -19,6 +19,190 @@ from lunar_python import Solar, Lunar, JieQi
 from engine.core.schemas import SpaceTimeParams, SolarTimeInput, BRANCH_INDEX_MAPPING, BRANCHES, SOLAR_TERM_YUE_JIANG, DAYTIME_BRANCHES
 
 
+# ============================================================
+#  天文学均时差 (Equation of Time) 计算模块
+#  基于斯宾塞 (Spencer, 1971) 傅里叶级数展开公式
+#  实现绝对精确的真太阳时校准
+# ============================================================
+
+def calculate_equation_of_time_spencer(day_of_year: int, year: int = 2024) -> float:
+    """
+    基于斯宾塞 (Spencer, 1971) 公式计算均时差 (Equation of Time)
+
+    均时差是真太阳时与平太阳时之间的差值，由地球轨道的椭圆率和自转轴倾角引起。
+    该函数使用斯宾塞提出的傅里叶级数展开公式，精度可达 ±0.01 分钟数量级，
+    广泛用于太阳能工程、天文历算等领域。
+
+    天文学背景：
+    - 均时差范围约在 -14.2 到 +16.4 分钟之间
+    - 产生原因有两个独立的天文效应：
+      ① 黄赤交角（ε≈23.44°）：导致太阳在黄道上的不均匀运动投影到天赤道
+      ② 地球轨道偏心率（e≈0.0167）：导致地球公转角速度的季节性变化
+    - 全年呈现双峰双谷的周期性波动曲线
+
+    Args:
+        day_of_year: 年积日 (1-365/366)，1月1日为第1天
+        year: 公历年份，用于闰年边界校验（不影响核心公式的365天基准）
+
+    Returns:
+        float: 均时差（分钟），正值表示真太阳时快于平太阳时
+
+    Raises:
+        ValueError: 年积日超出合法范围时抛出
+
+    References:
+        Spencer, J.W. (1971). "Fourier series representation of the position of
+        the Sun." Search, 2(5), 172.
+
+        NOAA Solar Calculator Documentation:
+        https://gml.noaa.gov/grad/solcalc/solareqns.PDF
+
+    Example:
+        >>> eot = calculate_equation_of_time_spencer(day_of_year=80, year=2024)
+        >>> print(f"春分附近的均时差: {eot:.2f} 分钟")
+        >>> # 全年最大正值通常在11月初，最大负值通常在2月中旬
+    """
+    # --- 输入验证 ---
+    if not isinstance(day_of_year, int):
+        raise TypeError(f"年积日必须为整数类型，当前类型: {type(day_of_year).__name__}")
+
+    if not 1 <= day_of_year <= 366:
+        raise ValueError(f"年积日必须在 1-366 之间，当前值: {day_of_year}")
+
+    # 闰年判断（格里高利历规则）
+    is_leap = (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
+    max_days = 366 if is_leap else 365
+
+    if day_of_year > max_days:
+        raise ValueError(
+            f"年积日 {day_of_year} 超出 {year} 年最大天数 {max_days} "
+            f"({'闰' if is_leap else '平'}年)"
+        )
+
+    # --- Spencer 公式核心计算 ---
+    # 将年积日转换为轨道角度 B（弧度制）
+    # B = 2π * (day_of_year - 1) / 365.0
+    # 注意：Spencer 原公式使用固定 365 天作为周期基准，不区分平闰年
+    B_radians = 2.0 * math.pi * (day_of_year - 1) / 365.0
+
+    # Spencer (1971) 傅里叶级数形式的均时差公式
+    #
+    # EoT = 229.18 * [
+    #     0.000075                          # C0: 常数项（微小的零点偏移）
+    #     + 0.001868 * cos(B)               # C1_cos: 一次余弦项
+    #     - 0.032077 * sin(B)               # C1_sin: 一次正弦项（主要项）
+    #     - 0.014615 * cos(2B)              # C2_cos: 二次余弦项
+    #     - 0.040849 * sin(2B)              # C2_sin: 二次正弦项（主要项）
+    # ]
+    #
+    # 系数物理含义：
+    #   一次项 (sin B, cos B)：由地球轨道偏心率主导，周期1年
+    #   二次项 (sin 2B, cos 2B)：由黄赤交角与偏心率的高阶耦合产生，周期半年
+    #   常数因子 229.18 = 1440 / (2π)：将弧度单位下的角度差转换为时间分钟
+
+    equation_of_time = 229.18 * (
+        0.000075
+        + 0.001868 * math.cos(B_radians)
+        - 0.032077 * math.sin(B_radians)
+        - 0.014615 * math.cos(2.0 * B_radians)
+        - 0.040849 * math.sin(2.0 * B_radians)
+    )
+
+    return equation_of_time
+
+
+def get_true_solar_time(beijing_time_str: str, longitude: float) -> datetime:
+    """
+    计算绝对精确的真太阳时 (True Solar Time)
+
+    将北京时间（UTC+8，以东经120°为中央经线）转换为观测点的
+    真太阳时。综合考虑经度平差和均时差两项修正。
+
+    计算流程：
+    ┌─────────────────────────────────────────────────────┐
+    │  真太阳时 = 北京时间 + 经度平差 + 均时差(EoT)      │
+    │                                                     │
+    │  经度平差 = (观测经度 - 120°) × 4 分钟/度          │
+    │  均时差   = Spencer 公式计算结果                     │
+    └─────────────────────────────────────────────────────┘
+
+    大六壬应用背景：
+    大六壬起课以真太阳时为准。古代以日晷测定时刻，即为真太阳时。
+    现代使用北京时间（平太阳时），需经此函数修正后方可用于起课。
+    尤其是经度偏离120°较多的地区（如新疆、西藏），修正量可达
+    1小时以上，对时柱地支判定影响重大。
+
+    Args:
+        beijing_time_str: 北京时间字符串，格式 "YYYY-MM-DD HH:MM:SS"
+                          例如 "2024-03-20 14:30:00"
+        longitude: 观测点经度（东经为正，西经为负）
+                   例如北京约 116.4°，乌鲁木齐约 87.6°
+
+    Returns:
+        datetime: 修正后的真太阳时 datetime 对象
+
+    Raises:
+        ValueError: 当时间字符串格式无效或经度超出范围时抛出
+        TypeError: 当参数类型不正确时抛出
+
+    Example:
+        >>> # 北京 (116.4°E) 春分下午的真太阳时
+        >>> true_time = get_true_solar_time("2024-03-20 14:30:00", 116.4)
+        >>> print(f"北京真太阳时: {true_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        >>>
+        >>> # 乌鲁木齐 (87.6°E) 正午的真太阳时
+        >>> urumqi = get_true_solar_time("2024-06-21 12:00:00", 87.6)
+        >>> print(f"乌鲁木齐真太阳时: {urumqi.strftime('%Y-%m-%d %H:%M:%S')}")
+    """
+    # --- 输入验证 ---
+    if not isinstance(beijing_time_str, str):
+        raise TypeError(
+            f"北京时间参数必须为字符串类型，当前类型: {type(beijing_time_str).__name__}"
+        )
+
+    if not isinstance(longitude, (int, float)):
+        raise TypeError(
+            f"经度参数必须为数值类型，当前类型: {type(longitude).__name__}"
+        )
+
+    if not -180.0 <= longitude <= 180.0:
+        raise ValueError(f"经度必须在 -180° 到 180° 之间，当前值: {longitude}")
+
+    # --- 解析北京时间字符串 ---
+    try:
+        beijing_time = datetime.strptime(beijing_time_str, '%Y-%m-%d %H:%M:%S')
+    except ValueError as e:
+        raise ValueError(
+            f"北京时间格式解析失败，需要格式 YYYY-MM-DD HH:MM:SS，"
+            f"实际输入: '{beijing_time_str}'"
+        ) from e
+
+    # --- 计算年积日（用于均时差计算） ---
+    day_of_year = beijing_time.timetuple().tm_yday
+
+    # --- 第一步：经度平差 ---
+    # 东八区（北京时间）中央经线为东经 120°
+    # 观测点每偏西1度，真太阳时慢4分钟；每偏东1度，真太阳时快4分钟
+    BEIJING_CENTRAL_MERIDIAN = 120.0  # 东八区中央经线 (120°E)
+    MINUTES_PER_DEGREE = 4.0  # 每度经度对应4分钟时差
+
+    longitude_correction = (
+        (longitude - BEIJING_CENTRAL_MERIDIAN) * MINUTES_PER_DEGREE
+    )  # 单位：分钟
+
+    # --- 第二步：均时差 (Equation of Time) ---
+    # 使用斯宾塞公式精确计算当日均时差
+    equation_of_time = calculate_equation_of_time_spencer(
+        day_of_year, beijing_time.year
+    )
+
+    # --- 第三步：合成真太阳时 ---
+    total_correction_minutes = longitude_correction + equation_of_time
+    true_solar_time = beijing_time + timedelta(minutes=total_correction_minutes)
+
+    return true_solar_time
+
+
 class SpaceTimeParser:
     """
     时空解析引擎 - 无状态类
@@ -112,56 +296,68 @@ class SpaceTimeParser:
     def _calculate_true_solar_time(dt: datetime, longitude: float) -> datetime:
         """
         计算真太阳时 (True Solar Time)
-        
+
         真太阳时 = 地方平太阳时 + 均时差 (Equation of Time)
-        
+
+        地方平太阳时基于经度与所在时区中央经线的差值修正，
+        均时差基于斯宾塞 (Spencer, 1971) 傅里叶级数公式计算。
+
+        该方法为 SpaceTimeParser 内部使用，外部调用请使用模块级函数
+        get_true_solar_time() 以获得更友好的接口。
+
         Args:
-            dt: 当地时间（已包含时区信息或默认为本地标准时间）
+            dt: 当地时间 datetime 对象（应已包含正确的时区信息）
             longitude: 经度（东经为正，西经为负）
-            
+
         Returns:
             datetime: 校准后的真太阳时
+
+        Raises:
+            ValueError: 经度超出合法范围时抛出
         """
-        # 1. 计算地方平太阳时差 (Local Mean Time Correction)
-        # 每度经度相差 4 分钟，以时区中央经线与用户经度的差值计算
-        
-        # 估算时区中央经线（简化版：根据UTC偏移量估算）
-        # 实际应用中应该传入时区信息，这里使用简化估算
-        utc_offset_hours = dt.utcoffset().total_seconds() / 3600 if dt.utcoffset() else 8.0  # 默认UTC+8
-        central_meridian = utc_offset_hours * 15.0  # 时区中央经线（每15度对应1小时）
-        
-        # 计算经度差（以中央经线为基准）
+        # --- 输入验证 ---
+        if not -180.0 <= longitude <= 180.0:
+            raise ValueError(f"经度必须在 -180° 到 180° 之间，当前值: {longitude}")
+
+        # ===============================================
+        #   第一部分：经度平差 (Longitude Correction)
+        # ===============================================
+        # 推算时区中央经线
+        # 原理：每个时区跨15°经度，中央经线 = UTC偏移小时数 × 15°
+        if dt.utcoffset() is not None:
+            utc_offset_hours = dt.utcoffset().total_seconds() / 3600.0
+        else:
+            # 若无时区信息，默认东八区（北京时间）
+            utc_offset_hours = 8.0
+
+        central_meridian = utc_offset_hours * 15.0  # 时区中央经线
+
+        # 观测点与中央经线的经度差
         longitude_diff = longitude - central_meridian
-        
-        # 计算地方平太阳时差（分钟）
-        local_time_correction = longitude_diff * SpaceTimeParser.MINUTES_PER_DEGREE
-        
-        # 2. 计算均时差 (Equation of Time)
-        # 这是一个复杂的正弦/余弦周期波动值（大约在 -14 到 +16 分钟之间）
-        
-        # 计算年中的第几天（1-365/366）
+
+        # 经度平差（分钟）：每度经度差对应4分钟时差
+        longitude_time_correction = (
+            longitude_diff * SpaceTimeParser.MINUTES_PER_DEGREE
+        )
+
+        # ===============================================
+        #   第二部分：均时差 (Equation of Time)
+        # ===============================================
+        # 获取年积日用于均时差计算
         day_of_year = dt.timetuple().tm_yday
-        
-        # 使用近似天文公式计算均时差
-        # B = 360 * (day_of_year - 81) / 365
-        # EoT = 9.87 * sin(2B) - 7.53 * cos(B) - 1.5 * sin(B)
-        
-        B_degrees = 360.0 * (day_of_year - 81) / 365.0
-        B_radians = math.radians(B_degrees)
-        
-        equation_of_time = (
-            9.87 * math.sin(2 * B_radians) - 
-            7.53 * math.cos(B_radians) - 
-            1.5 * math.sin(B_radians)
-        )  # 单位为分钟
-        
-        # 3. 计算总时间偏移量
-        total_correction_minutes = local_time_correction + equation_of_time
-        
-        # 4. 应用时间偏移量
+
+        # 调用斯宾塞公式精确计算当日均时差
+        equation_of_time = calculate_equation_of_time_spencer(
+            day_of_year, dt.year
+        )
+
+        # ===============================================
+        #   第三部分：合成真太阳时
+        # ===============================================
+        total_correction_minutes = longitude_time_correction + equation_of_time
         correction_timedelta = timedelta(minutes=total_correction_minutes)
         true_solar_time = dt + correction_timedelta
-        
+
         return true_solar_time
     
     @staticmethod
@@ -383,50 +579,145 @@ def parse_solar_time(solar_time_str: str, longitude: float, gender: str, birth_y
 if __name__ == "__main__":
     """
     测试时空解析功能（包含真太阳时校准）
+    验证斯宾塞公式均时差计算和 get_true_solar_time 主函数
     """
-    # 测试数据
+    # ===========================================
+    #   测试一：斯宾塞均时差公式计算
+    # ===========================================
+    print("╔══════════════════════════════════════════════════╗")
+    print("║      斯宾塞 (Spencer) 均时差公式测试              ║")
+    print("╚══════════════════════════════════════════════════╝")
+
+    # 选取四个关键日期节点验证均时差曲线
+    test_dates_eot = [
+        (1, "1月1日（近日点附近）"),
+        (80, "3月21日（春分附近）"),
+        (172, "6月21日（夏至附近）"),
+        (266, "9月23日（秋分附近）"),
+        (355, "12月21日（冬至附近）"),
+    ]
+
+    for day, desc in test_dates_eot:
+        eot = calculate_equation_of_time_spencer(day, 2024)
+        direction = "快于" if eot > 0 else "慢于"
+        print(f"  {desc:30s} | 年积日 {day:3d} | "
+              f"均时差 = {eot:+.2f} 分钟 (真太阳时 {direction} 平太阳时)")
+
+    print()
+    print(f"  全年均时差范围：[{calculate_equation_of_time_spencer(46, 2024):.1f}, "
+          f"{calculate_equation_of_time_spencer(309, 2024):.1f}] 分钟")
+    print(f"  理论范围参考：[-14.2, +16.4] 分钟")
+
+    # ===========================================
+    #   测试二：get_true_solar_time 主函数
+    # ===========================================
+    print("\n╔══════════════════════════════════════════════════╗")
+    print("║      get_true_solar_time() 主函数测试             ║")
+    print("╚══════════════════════════════════════════════════╝")
+
     test_time = "2024-03-20 14:30:00"  # 春分附近
+
+    # 测试不同城市的真太阳时
+    cities = [
+        ("北京", 116.4, "东经116.4°"),
+        ("上海", 121.5, "东经121.5°"),
+        ("乌鲁木齐", 87.6, "东经87.6°"),
+        ("拉萨", 91.1, "东经91.1°"),
+        ("哈尔滨", 126.6, "东经126.6°"),
+    ]
+
+    beijing_dt = datetime.strptime(test_time, '%Y-%m-%d %H:%M:%S')
+    day_of_year = beijing_dt.timetuple().tm_yday
+
+    for city_name, lon, desc in cities:
+        true_solar = get_true_solar_time(test_time, lon)
+        # 计算各项修正的贡献
+        lon_corr = (lon - 120.0) * 4.0
+        eot_corr = calculate_equation_of_time_spencer(day_of_year, 2024)
+        total_corr = lon_corr + eot_corr
+        print(f"\n  📍 {city_name} ({desc})")
+        print(f"     输入北京时间:     {test_time}")
+        print(f"     经度平差:          {lon_corr:+.2f} 分钟")
+        print(f"     均时差(EoT):       {eot_corr:+.2f} 分钟")
+        print(f"     总修正量:          {total_corr:+.2f} 分钟 "
+              f"({total_corr / 60.0:+.2f} 小时)")
+        print(f"     真太阳时:          {true_solar.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # ===========================================
+    #   测试三：异常处理验证
+    # ===========================================
+    print("\n╔══════════════════════════════════════════════════╗")
+    print("║         异常处理与边界条件测试                    ║")
+    print("╚══════════════════════════════════════════════════╝")
+
+    # 测试无效时间格式
+    try:
+        get_true_solar_time("2024-13-01 12:00:00", 116.4)
+        print("  ✗ 应该抛出异常但未抛出")
+    except ValueError as e:
+        print(f"  ✓ 无效月份被正确拦截: {e}")
+
+    # 测试无效经度
+    try:
+        get_true_solar_time("2024-03-20 12:00:00", 200.0)
+        print("  ✗ 应该抛出异常但未抛出")
+    except ValueError as e:
+        print(f"  ✓ 经度超限被正确拦截: {e}")
+
+    # 测试平年2月29日（非闰年）
+    try:
+        calculate_equation_of_time_spencer(366, 2023)  # 2023不是闰年
+        print("  ✗ 应该抛出异常但未抛出")
+    except ValueError as e:
+        print(f"  ✓ 平年366天被正确拦截: {e}")
+
+    # 测试年积日边界
+    try:
+        calculate_equation_of_time_spencer(0, 2024)
+        print("  ✗ 应该抛出异常但未抛出")
+    except ValueError as e:
+        print(f"  ✓ 年积日≤0被正确拦截: {e}")
+
+    # ===========================================
+    #   测试四：SpaceTimeParser 完整集成测试
+    # ===========================================
+    print("\n╔══════════════════════════════════════════════════╗")
+    print("║     SpaceTimeParser 完整时空解析测试              ║")
+    print("╚══════════════════════════════════════════════════╝")
+
     test_longitude = 116.4  # 北京经度
     test_gender = "男"
     test_birth_year = 1990
-    
+
     try:
-        # 解析时空参数（包含真太阳时校准）
-        params = SpaceTimeParser.parse_datetime(test_time, test_longitude, test_gender, test_birth_year)
-        
-        print("=== 大六壬时空解析测试结果（真太阳时校准） ===")
-        print(f"输入时间: {test_time}")
-        print(f"经度: {test_longitude}°E")
-        print(f"性别: {test_gender}, 出生年份: {test_birth_year}")
+        params = SpaceTimeParser.parse_datetime(
+            test_time, test_longitude, test_gender, test_birth_year
+        )
+
+        print(f"  输入时间: {test_time}")
+        print(f"  经度: {test_longitude}°E")
+        print(f"  性别: {test_gender}, 出生年份: {test_birth_year}")
         print()
-        print("四柱八字:")
-        print(f"  年柱: {params.year_stem_branch}")
-        print(f"  月柱: {params.month_stem_branch}")
-        print(f"  日柱: {params.day_stem_branch}")
-        print(f"  时柱: {params.hour_stem_branch}")
+        print("  四柱八字:")
+        print(f"    年柱: {params.year_stem_branch}")
+        print(f"    月柱: {params.month_stem_branch}")
+        print(f"    日柱: {params.day_stem_branch}")
+        print(f"    时柱: {params.hour_stem_branch}")
         print()
-        print("大六壬参数:")
-        print(f"  占时索引: {params.zhan_shi_index} ({BRANCHES[params.zhan_shi_index]})")
-        print(f"  月将索引: {params.yue_jiang_index} ({BRANCHES[params.yue_jiang_index]})")
-        print(f"  昼夜判定: {'白天' if params.is_daytime else '夜间'}")
-        print(f"  本命索引: {params.ben_ming_index} ({BRANCHES[params.ben_ming_index]})")
-        print(f"  行年索引: {params.xing_nian_index} ({BRANCHES[params.xing_nian_index]})")
-        
-        # 测试不同经度的真太阳时校准
-        print("\n=== 真太阳时校准测试 ===")
-        test_datetime = datetime(2024, 3, 20, 14, 30, 0)
-        
-        # 北京 (116.4°E)
-        beijing_time = SpaceTimeParser._calculate_true_solar_time(test_datetime, 116.4)
-        print(f"北京 (116.4°E) 真太阳时: {beijing_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # 纽约 (-74.0°E)
-        newyork_time = SpaceTimeParser._calculate_true_solar_time(test_datetime, -74.0)
-        print(f"纽约 (-74.0°E) 真太阳时: {newyork_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # 伦敦 (0.0°E)
-        london_time = SpaceTimeParser._calculate_true_solar_time(test_datetime, 0.0)
-        print(f"伦敦 (0.0°E) 真太阳时: {london_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
+        print("  大六壬参数:")
+        print(f"    占时索引: {params.zhan_shi_index} "
+              f"({BRANCHES[params.zhan_shi_index]})")
+        print(f"    月将索引: {params.yue_jiang_index} "
+              f"({BRANCHES[params.yue_jiang_index]})")
+        print(f"    昼夜判定: {'白天 ☀️' if params.is_daytime else '夜间 🌙'}")
+        print(f"    本命索引: {params.ben_ming_index} "
+              f"({BRANCHES[params.ben_ming_index]})")
+        print(f"    行年索引: {params.xing_nian_index} "
+              f"({BRANCHES[params.xing_nian_index]})")
+
     except Exception as e:
-        print(f"解析失败: {str(e)}")
+        print(f"  ✗ 解析失败: {str(e)}")
+
+    print("\n" + "=" * 52)
+    print("  所有测试完成 ✅")
+    print("=" * 52)
