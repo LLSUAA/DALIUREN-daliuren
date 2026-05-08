@@ -1,5 +1,5 @@
 """
-大六壬神谕解读模块 - 集成大模型API生成赛博朋克风格判词
+大六壬终端解读模块 - 集成大模型API生成赛博朋克风格判词
 v2.0 - 引入分类占意图路由网关
 
 架构说明：
@@ -321,12 +321,12 @@ def build_system_prompt(category: IntentCategory) -> str:
 
 
 # ============================================================
-#   OracleAI —— 大模型神谕调用封装 (V2.0 解耦版)
+#   OracleAI —— 大模型大六壬调用封装 (V2.0 解耦版)
 # ============================================================
 
 class OracleAI:
     """
-    神谕AI系统 v2.0
+    大六壬终端AI系统 v2.0
 
     负责与大模型 API 交互，封装分类占意图路由逻辑。
     网络请求层已彻底解耦至 utils.api_client.LLMClient。
@@ -459,7 +459,7 @@ class OracleAI:
 {kong_wang_info}
 【架构师最高指令】：
 请根据以上经过物理引擎精确计算的【真实三传、六亲、天将与神煞数据】，严格遵循 System Prompt 中的规则进行生克推演。
-你现在拥有了完整的数据链（发端→发展→结果），严禁自行捏造排盘数据，严禁产生逻辑断层的幻觉！请直接输出四段式神谕判词。
+你现在拥有了完整的数据链（发端→发展→结果），严禁自行捏造排盘数据，严禁产生逻辑断层的幻觉！请直接输出四段大六壬判词。
 """
         return system_prompt, user_message.strip()
 
@@ -474,7 +474,7 @@ class OracleAI:
         spacetime_data: Dict[str, Any]
     ) -> str:
         """
-        生成大六壬神谕判词（非流式，返回完整文本）
+        生成大六壬判词（非流式，返回完整文本）
 
         内部调用 _build_prompts + llm.generate_response(stream=False)
         """
@@ -500,7 +500,7 @@ class OracleAI:
             return response_text.strip()
 
         except Exception as e:
-            print(f"神谕推演失败: {e}")
+            print(f"大六壬推演失败: {e}")
             return self._get_fallback_reading(intent)
 
     # ────────────────────────────────────────
@@ -514,7 +514,7 @@ class OracleAI:
         spacetime_data: Dict[str, Any]
     ):
         """
-        SSE 流式神谕判词生成器
+        SSE 流式大六壬判词生成器
 
         与 generate_reading 使用完全相同的 Prompt 构建逻辑（_build_prompts），
         但底层调用 self.llm.generate_response(stream=True)，
@@ -579,8 +579,8 @@ class OracleAI:
     def _get_fallback_reading(self, intent: str) -> str:
         """API 调用失败时的备用判词"""
         fallback_readings = [
-            f"[ERR] 神谕连接中断，精神链路不稳定。量子纠缠中检测到关于'{intent}'的微弱信号，但无法完整解码。建议重新校准时空参数。",
-            f"[WARN] 赛博空间波动异常，神谕系统暂时离线。关于'{intent}'的命运轨迹在数据流中若隐若现，但需要更稳定的连接才能清晰呈现。",
+            f"[ERR] 大六壬终端连接中断，精神链路不稳定。量子纠缠中检测到关于'{intent}'的微弱信号，但无法完整解码。建议重新校准时空参数。",
+            f"[WARN] 赛博空间波动异常，大六壬终端系统暂时离线。关于'{intent}'的命运轨迹在数据流中若隐若现，但需要更稳定的连接才能清晰呈现。",
             f"[INFO] 神经接口连接超时。检测到'{intent}'相关的时空涟漪，但全息投影系统需要重新初始化才能显示完整判词。"
         ]
         return random.choice(fallback_readings)
@@ -590,19 +590,19 @@ class OracleAI:
 #   公共接口层
 # ============================================================
 
-# 全局神谕实例（单例）
+# 全局大六壬卜卦实例（单例）
 _oracle_instance: Optional[OracleAI] = None
 
 
 def get_oracle() -> OracleAI:
     """
-    获取神谕实例（单例模式）
+    获取大六壬实例（单例模式）
 
     延迟初始化，首次调用时创建 OracleAI 实例并缓存。
     避免在模块加载时读取环境变量。
 
     Returns:
-        OracleAI: 神谕AI实例
+        OracleAI: 大六壬终端AI实例
     """
     global _oracle_instance
     if _oracle_instance is None:
@@ -616,7 +616,7 @@ async def generate_reading(
     spacetime_data: Dict[str, Any]
 ) -> str:
     """
-    生成大六壬神谕判词（非流式，对外统一接口）
+    生成大六壬卜卦判词（非流式，对外统一接口）
 
     该函数为 api/server.py 调用的入口，内部自动完成：
     意图路由 → Prompt 构建 → 大模型调用 → 结果返回
@@ -627,7 +627,7 @@ async def generate_reading(
         spacetime_data: 时空参数数据
 
     Returns:
-        str: 神谕判词文本
+        str: 大六壬卜卦判词文本
     """
     oracle = get_oracle()
     return await oracle.generate_reading(intent, snapshot_data, spacetime_data)
@@ -639,7 +639,7 @@ def generate_reading_stream(
     spacetime_data: Dict[str, Any]
 ):
     """
-    SSE 流式神谕判词生成器（对外统一接口）
+    SSE 流式大六壬判词生成器（对外统一接口）
 
     供 api/server.py 的 SSE 端点调用。
     返回同步生成器，FastAPI StreamingResponse 可直接消费。

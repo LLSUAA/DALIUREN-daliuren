@@ -30,9 +30,21 @@ class LLMClient:
     def __init__(self):
         # 从 .env 读取配置，如果没有配置则给默认的 DeepSeek 官方接口
         self.api_key = os.getenv("OPENAI_API_KEY")
-        self.base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+        self.base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com")
         self.default_model = os.getenv("OPENAI_MODEL", "deepseek-chat")
-        
+        # 【新增】：从 .env 读取高级参数，带默认值和类型转换
+        try:
+            self.default_temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.01"))
+        except ValueError:
+            self.default_temperature = 0.01  # 容错兜底
+            
+        try:
+            self.default_max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", "4000"))
+        except ValueError:
+            self.default_max_tokens = 4000   # 容错兜底
+
+
+            
         # 【防线1修改】：去掉 raise，改为赋值 flag
         if not self.api_key:
             self._key_missing = True
@@ -51,9 +63,14 @@ class LLMClient:
         user_prompt: str, 
         model: str = None, 
         stream: bool = False,
-        temperature: float = 0.01,  # 默认设为0.01，极大降低幻觉，确保解卦的严谨性
-        max_tokens: int = 4000      # 限制最大Token数，防止输出截断
+        temperature: float = None,  # 改为 None，以便动态接收 self 里的配置
+        max_tokens: int = None      # 改为 None，以便动态接收 self 里的配置
     ):
+
+        # 动态赋值：如果调用时没指定，就用 .env 里读到的全局配置
+        actual_temp = temperature if temperature is not None else self.default_temperature
+        actual_tokens = max_tokens if max_tokens is not None else self.default_max_tokens
+
         if getattr(self, '_key_missing', False):
             if stream:
                 # 返回一个伪造的生成器

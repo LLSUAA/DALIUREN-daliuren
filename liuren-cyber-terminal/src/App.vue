@@ -431,6 +431,20 @@ const syncCurrentTime = () => {
   timeStr.value = `${year}-${month}-${day}T${hours}:${minutes}`;
 };
 
+// 大六壬打字机效果
+const typeOracleText = async (text: string, error: boolean = false) => {
+  isTyping.value = true;
+  isError.value = error;
+  displayedOracle.value = '';
+  
+  for (let i = 0; i < text.length; i++) {
+    displayedOracle.value += text[i];
+    await new Promise(resolve => setTimeout(resolve, 30)); // 30ms延迟，模拟打字效果
+  }
+  
+  isTyping.value = false;
+};
+
 // 网络IP定位功能
 const networkLocate = async () => {
   oracleReading.value = '[SYS_INFO] 正在扫描网络节点，请求物理坐标...';
@@ -482,37 +496,41 @@ const networkLocate = async () => {
     }
     
   } catch (error: any) {
-    console.error('网络定位错误:', error);
-    
-    let errorMessage = '[SYS_ERR] 网络定位超时或被拦截，请手动输入城市';
+    console.error('推演错误:', error);
+    isTyping.value = false;
     
     // 优雅降级：网络错误处理
     if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-      oracleReading.value = '[SYS_ERR] 神经链路断开：无法连接到大六壬底层引擎。\n\n💡 可能原因：\n1. 你的杀毒软件（如360）误杀了后台引擎（liuren-engine.exe），请将其加入白名单。\n2. 未安装所需的运行环境，请检查安装目录。';
+      oracleReading.value = '[SYS_ERR] 神经链路断开：无法连接到大六壬底层引擎，请检查后端进程是否存活。';
     } else if (error.message.includes('HTTP错误')) {
       oracleReading.value = `[HTTP_ERR] 服务器响应异常: ${error.message}`;
     } else {
-      oracleReading.value = errorMessage;
+      oracleReading.value = `[ENGINE_ERR] ${error.message}`;
     }
     
-    // 这行必须放在所有的 if-else 校验外，且被包裹在 catch 内部
-    await typeOracleText(oracleReading.value, true);
+    displayedOracle.value = oracleReading.value;
+    isError.value = true;
+    
+    // 如果后端连接失败，回退到前端随机旋转
+    const randomOffset = Math.floor(Math.random() * 12);
+    setOffset(randomOffset);
+    
+    result.value = {
+      spacetime_params: {
+        four_pillars: { year: '--', month: '--', day: '--', hour: '--' },
+        true_solar_time: '--',
+        ben_ming: '--',
+        xing_nian: '--',
+        is_daytime: '--'
+      },
+      event_intent: eventIntent.value,
+      route_warning: '[FALLBACK] 后端连接失败，启用本地推演模式'
+    };
+  } finally {
+    isLoading.value = false;
   }
-};
+}
 
-// 大六壬打字机效果
-const typeOracleText = async (text: string, error: boolean = false) => {
-  isTyping.value = true;
-  isError.value = error;
-  displayedOracle.value = '';
-  
-  for (let i = 0; i < text.length; i++) {
-    displayedOracle.value += text[i];
-    await new Promise(resolve => setTimeout(resolve, 30)); // 30ms延迟，模拟打字效果
-  }
-  
-  isTyping.value = false;
-};
 
 // 赛博朋克风格 Markdown 解析器 (将大模型的 ** 和 - 转换成发光UI)
 const formatOracle = (text: string) => {
@@ -679,12 +697,12 @@ async function spacetimeDeduce() {
             };
           }
         } catch {
-          // 非 JSON，作为神谕文本处理
+          // 非 JSON，作为大六壬文本处理
         }
         
         if (isSnapshot) continue;
         
-        // === 神谕文本块：逐字追加到终端显示区 ===
+        // === 大六壬文本块：逐字追加到终端显示区 ===
         isTyping.value = true;
         displayedOracle.value += data;
         oracleReading.value += data;
