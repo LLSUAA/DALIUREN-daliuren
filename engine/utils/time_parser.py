@@ -429,12 +429,16 @@ class SpaceTimeParser:
     @staticmethod
     def _calculate_yue_jiang_index(solar_time: Solar) -> int:
         """
-        精算月将索引 (基于中气)
+        精算月将索引 (基于精确中气算法)
         
         大六壬月将与节气（中气）严格挂钩：
         雨水-亥将(11), 春分-戌将(10), 谷雨-酉将(9), 小满-申将(8), 
         夏至-未将(7), 大暑-午将(6), 处暑-巳将(5), 秋分-辰将(4), 
         霜降-卯将(3), 小雪-寅将(2), 冬至-丑将(1), 大寒-子将(0)
+        
+        算法原理：
+        月将即太阳过宫之所，以十二中气为分界点。当前时间所处的中气区间
+        由上一个已过去的中气决定。例如雨水后、春分前为亥将。
         
         Args:
             solar_time: 太阳历对象
@@ -445,27 +449,16 @@ class SpaceTimeParser:
         # 转换为农历时间以获取节气信息
         lunar_time = Lunar.fromSolar(solar_time)
         
-        # 获取当前月份和节气
-        current_month = lunar_time.getMonth()
+        # 获取上一个中气的名称（如"雨水"、"春分"等）
+        prev_zhong_qi = lunar_time.getPrevQi()
+        zhong_qi_name = prev_zhong_qi.getName()
         
-        # 简化版：根据月份推算月将（实际应该基于精确的节气日期）
-        # 这里使用简化的月份映射，实际应用中应该基于精确的节气计算
-        month_yue_jiang_mapping = {
-            1: 0,   # 正月 - 子将 (大寒后)
-            2: 11,  # 二月 - 亥将 (雨水后)  
-            3: 10,  # 三月 - 戌将 (春分后)
-            4: 9,   # 四月 - 酉将 (谷雨后)
-            5: 8,   # 五月 - 申将 (小满后)
-            6: 7,   # 六月 - 未将 (夏至后)
-            7: 6,   # 七月 - 午将 (大暑后)
-            8: 5,   # 八月 - 巳将 (处暑后)
-            9: 4,   # 九月 - 辰将 (秋分后)
-            10: 3,  # 十月 - 卯将 (霜降后)
-            11: 2,  # 冬月 - 寅将 (小雪后)
-            12: 1   # 腊月 - 丑将 (冬至后)
-        }
+        # 利用中气->月将映射字典获取正确的月将索引
+        if zhong_qi_name in SOLAR_TERM_YUE_JIANG:
+            return SOLAR_TERM_YUE_JIANG[zhong_qi_name]
         
-        return month_yue_jiang_mapping.get(current_month, 0)
+        # 兜底：如遇未知中气名称，回退到大寒
+        return SOLAR_TERM_YUE_JIANG.get('大寒', 0)
     
     @staticmethod
     def _determine_daytime(zhan_shi_index: int) -> bool:

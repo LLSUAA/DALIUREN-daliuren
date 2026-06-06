@@ -141,48 +141,85 @@
     
     <!-- 底部结果展示面板 -->
     <div v-if="result" class="result-panel">
-      <div class="result-grid">
-        <div class="result-item">
-          <div class="result-label">四柱八字</div>
-          <div class="result-value">
-            {{ result.spacetime_params.four_pillars.year }} 
-            {{ result.spacetime_params.four_pillars.month }}
-            {{ result.spacetime_params.four_pillars.day }}
-            {{ result.spacetime_params.four_pillars.hour }}
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!--  系统客观排盘阵列监控区 (V3.0 白盒化改造)              -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <div v-if="result && result.snapshot && result.spacetime_params" class="cyber-monitor-panel">
+        
+        <!-- ═══ 区块 A：基础占测参数 ═══ -->
+        <div class="monitor-section">
+          <div class="monitor-section-title">
+            <span class="section-icon">[A]</span> 基础占测参数 // BASIC PARAMETERS
+          </div>
+          <div class="monitor-grid basic-grid">
+            <div class="monitor-field">
+              <span class="field-key">占时</span>
+              <span class="field-val">{{ result.spacetime_params.true_solar_time }}</span>
+            </div>
+            <div class="monitor-field">
+              <span class="field-key" style="color: #00c6ff;">日辰</span>
+              <span class="field-val" style="color: #00c6ff; font-weight: bold;">
+                {{ result.spacetime_params.four_pillars?.day || '未知' }}日
+              </span>
+            </div>
+            <div class="monitor-field">
+              <span class="field-key" style="color: #ff0055;">月将</span>
+              <span class="field-val" style="color: #ff0055; font-weight: bold;">
+                {{ result.spacetime_params.yue_jiang || '待后端接入' }}将
+              </span>
+            </div>
+            <div class="monitor-field">
+              <span class="field-key">事由</span>
+              <span class="field-val">{{ result.event_intent || '未提供' }}</span>
+            </div>
+            <div class="monitor-field">
+              <span class="field-key">占问人</span>
+              <span class="field-val">本命: {{ result.spacetime_params.ben_ming }} / 行年: {{ result.spacetime_params.xing_nian }}</span>
+            </div>
+            <div class="monitor-field">
+              <span class="field-key">昼夜</span>
+              <span class="field-val">{{ result.spacetime_params.is_daytime }}</span>
+            </div>
           </div>
         </div>
-        
-        <div class="result-item">
-          <div class="result-label">真太阳时</div>
-          <div class="result-value">{{ result.spacetime_params.true_solar_time }}</div>
-        </div>
-        
-        <div class="result-item">
-          <div class="result-label">占测事由</div>
-          <div class="result-value">{{ result.event_intent }}</div>
-        </div>
-        
-        <div class="result-item">
-          <div class="result-label">地理位置</div>
-          <div class="result-value">{{ resolvedLocationName }} ({{ currentLongitude }}°E)</div>
-        </div>
-        
-        <div class="result-item">
-          <div class="result-label">本命行年</div>
-          <div class="result-value">
-            {{ result.spacetime_params.ben_ming }} / 
-            {{ result.spacetime_params.xing_nian }}
+
+        <!-- ═══ 区块 B：系统客观排盘阵列 ═══ -->
+        <div class="monitor-section">
+          <div class="monitor-section-title">
+            <span class="section-icon">[B]</span> 系统客观排盘阵列 // OBJECTIVE DIVINATION ARRAY
           </div>
-        </div>
-        
-        <div class="result-item">
-          <div class="result-label">昼夜判定</div>
-          <div class="result-value">{{ result.spacetime_params.is_daytime }}</div>
-        </div>
-        
-        <div class="result-item">
-          <div class="result-label">天盘偏移</div>
-          <div class="result-value">{{ offset }} 宫位 ({{ branches[offset] }}宫)</div>
+          
+          <div class="array-block">
+            <div class="array-row">
+              <span class="array-key">旬空</span>
+              <span class="array-val neon-green">
+                [{{ (result.snapshot?.reversal_flags?.kong_wang_branches || []).join(', ') }}]
+              </span>
+            </div>
+            
+            <div class="array-row">
+              <span class="array-key">四课</span>
+              <span class="array-val neon-green">
+                <span v-for="(lesson, idx) in (result.snapshot?.four_lessons || [])" :key="idx">
+                  <template v-if="idx > 0"> | </template>
+                  第{{ lesson?.lesson_id }}课({{ lesson?.top_branch }} {{ lesson?.bottom_branch }})
+                </span>
+                <span v-if="!(result.snapshot?.four_lessons?.length)">-- 数据缺失 --</span>
+              </span>
+            </div>
+            
+            <div class="array-row">
+              <span class="array-key">三传</span>
+              <span class="array-val neon-green">
+                <template v-for="(tx, idx) in (result.snapshot?.three_transmissions || [])" :key="idx">
+                  <template v-if="idx > 0"> ➔ </template>
+                  {{ tx?.name }}: [{{ tx?.branch_name }}]({{ tx?.liu_qin }})
+                  <template v-if="getTianJiang(tx?.heaven_index)"> · {{ getTianJiang(tx?.heaven_index) }}</template>
+                </template>
+                <span v-if="!(result.snapshot?.three_transmissions?.length)">-- 数据缺失 --</span>
+              </span>
+            </div>
+          </div>
         </div>
       </div>
       
@@ -224,7 +261,7 @@ const startEngine = async () => {
 };
 
 // 在页面加载时启动引擎
-startEngine();
+//startEngine();
 
 // 地支十二宫位
 const branches = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥'];
@@ -309,6 +346,15 @@ const offset = ref(0);
 
 // 计算内圈旋转角度（使用高级物理动画曲线）
 const innerRotation = computed(() => `rotate(${offset.value * 30}deg)`);
+
+// 根据三传天盘索引查找对应天将名称
+const getTianJiang = (heavenIndex: number | undefined): string => {
+  if (heavenIndex === undefined || heavenIndex === null) return '';
+  const tianJiangArr = result.value?.snapshot?.tian_jiang;
+  if (!tianJiangArr) return '';
+  const found = tianJiangArr.find((tj: { heaven_index: number; general: string }) => tj.heaven_index === heavenIndex);
+  return found ? found.general : '';
+};
 
 // 后端API地址
 const API_BASE_URL = 'http://127.0.0.1:14285';
@@ -691,6 +737,7 @@ async function spacetimeDeduce() {
             
             // 组装结果对象供星盘渲染
             result.value = {
+              snapshot: engineSnapshot,      // <--- 核心修复：把丢失的引擎快照数据接通！
               spacetime_params: json.spacetime_params || {},
               event_intent: json.event_intent || '',
               route_warning: json.route_warning || ''
@@ -1208,31 +1255,113 @@ select:focus option:checked {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
 }
 
-.result-grid {
+/* ═══════════════════════════════════════════════════════ */
+/*  系统客观排盘阵列监控区 (V3.0 赛博朋克风格)              */
+/* ═══════════════════════════════════════════════════════ */
+.cyber-monitor-panel {
+  background: #0a0a0a;
+  border: 1px solid rgba(0, 180, 255, 0.15);
+  border-radius: 12px;
+  padding: 20px;
+  font-family: 'Courier New', 'Source Code Pro', 'Consolas', monospace;
+  box-shadow: 
+    inset 0 0 40px rgba(0, 180, 255, 0.03),
+    0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.monitor-section {
+  margin-bottom: 18px;
+}
+
+.monitor-section:last-child {
+  margin-bottom: 0;
+}
+
+.monitor-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #4080a0;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(0, 180, 255, 0.1);
+}
+
+.section-icon {
+  color: #00c6ff;
+  margin-right: 6px;
+}
+
+/* 区块A：基础参数网格 */
+.monitor-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
 }
 
-.result-item {
-  padding: 16px;
-  background: rgba(255, 255, 255, 0.02);
-  border-radius: 8px;
-  border-left: 3px solid rgba(0, 200, 255, 0.5);
+.monitor-field {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.015);
+  border-radius: 4px;
+  border-left: 2px solid rgba(0, 200, 255, 0.2);
 }
 
-.result-label {
-  font-size: 12px;
-  color: #a0a0a0;
+.field-key {
+  font-size: 11px;
+  color: #606060;
   text-transform: uppercase;
   letter-spacing: 1px;
-  margin-bottom: 8px;
+  white-space: nowrap;
+  min-width: 48px;
 }
 
-.result-value {
-  font-size: 16px;
-  color: #ffffff;
+.field-val {
+  font-size: 13px;
+  color: #c0c0c0;
   font-weight: 500;
+}
+
+/* 区块B：排盘数据阵列 */
+.array-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.array-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(0, 255, 65, 0.02);
+  border-radius: 4px;
+  border: 1px solid rgba(0, 255, 65, 0.06);
+}
+
+.array-key {
+  font-size: 11px;
+  color: #506050;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  min-width: 40px;
+  padding-top: 2px;
+}
+
+.array-val {
+  font-size: 14px;
+  color: #00FF41;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.neon-green {
+  color: #00FF41;
+  text-shadow: 0 0 6px rgba(0, 255, 65, 0.3);
 }
 
 .route-warning {

@@ -114,10 +114,10 @@ class DaLiuRenEngine:
             Dict[str, Any]: 硬逻辑状态字典
         """
         # 计算旬空（空亡）地支
-        kong_wang_branches = DaLiuRenEngine._calculate_kong_wang(day_stem_index)
+        kong_wang_branches = DaLiuRenEngine._calculate_kong_wang(day_stem_index, day_branch_index)
         
         # 判断是否触发空亡
-        is_kong_wang = day_branch_index in [BRANCHES.index(branch) for branch in kong_wang_branches]
+        is_kong_wang = BRANCHES[day_branch_index] in kong_wang_branches
         
         # 判断是否绝处逢生（简化版，实际需要更复杂的生克计算）
         is_jue_chu_feng_sheng = DaLiuRenEngine._check_jue_chu_feng_sheng(day_stem_index, day_branch_index)
@@ -133,33 +133,40 @@ class DaLiuRenEngine:
         }
     
     @staticmethod
-    def _calculate_kong_wang(day_stem_index: int) -> List[str]:
+    def _calculate_kong_wang(day_stem_index: int, day_branch_index: int) -> List[str]:
         """
-        计算旬空（空亡）地支
+        计算旬空（空亡）地支 — 基于标准干支数学公式
+        
+        算法原理：
+        六十甲子每旬10组干支，旬首为甲*地支。每旬中缺两个地支，即为空亡。
+        
+        公式推导：
+        1. 旬首地支 = (日支索引 - 日干索引) mod 12
+        2. 空亡地支 = (旬首地支 - 2) mod 12, (旬首地支 - 1) mod 12
+           
+        验证示例：
+        - 辛亥日: stem=7(辛), branch=11(亥)
+          xun_start = (11-7)%12 = 4(辰) → 甲辰旬
+          kong_wang = (4-2)%12=2(寅), (4-1)%12=3(卯) → 寅卯空 ✓
+        - 甲子日: stem=0(甲), branch=0(子)
+          xun_start = (0-0)%12 = 0(子) → 甲子旬
+          kong_wang = (0-2)%12=10(戌), (0-1)%12=11(亥) → 戌亥空 ✓
         
         Args:
-            day_stem_index: 日干索引
+            day_stem_index: 日干索引 (0-9)
+            day_branch_index: 日支索引 (0-11)
             
         Returns:
-            List[str]: 空亡地支列表
+            List[str]: 空亡地支列表（两个汉字）
         """
-        # 旬空计算规则：甲子旬中戌亥空，甲戌旬中申酉空，甲申旬中午未空，
-        # 甲午旬中辰巳空，甲辰旬中寅卯空，甲寅旬中子丑空
+        # 计算旬首地支索引
+        xun_start_branch = (day_branch_index - day_stem_index) % 12
         
-        # 根据日干确定旬首
-        xun_shou = day_stem_index // 2 * 2  # 取最近的偶数作为旬首
+        # 计算两个空亡地支索引
+        kong_wang_1 = (xun_start_branch - 2) % 12
+        kong_wang_2 = (xun_start_branch - 1) % 12
         
-        # 旬空地支映射
-        kong_wang_mapping = {
-            0: ["戌", "亥"],  # 甲子旬
-            2: ["申", "酉"],  # 甲戌旬
-            4: ["午", "未"],  # 甲申旬
-            6: ["辰", "巳"],  # 甲午旬
-            8: ["寅", "卯"],  # 甲辰旬
-        }
-        
-        # 默认返回甲寅旬的空亡地支
-        return kong_wang_mapping.get(xun_shou, ["子", "丑"])
+        return [BRANCHES[kong_wang_1], BRANCHES[kong_wang_2]]
     
     @staticmethod
     def _check_jue_chu_feng_sheng(day_stem_index: int, day_branch_index: int) -> bool:
